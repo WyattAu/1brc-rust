@@ -97,31 +97,34 @@ impl Table {
         for slot in other.slots {
             if let Some(e) = slot {
                 let name_len = e.len as usize;
-                let (name, hash, min, max, sum, count) = (
-                    e.name[..name_len].to_vec(),
-                    e.hash,
-                    e.min,
-                    e.max,
-                    e.sum,
-                    e.count,
-                );
-                // ensure an entry exists (min carries the seed temperature),
-                // then fold the aggregates
-                self.upsert(&name, hash, min);
-                let mut i = (hash as usize) & self.mask;
+                let mut nm = [0u8; NAME_MAX];
+                nm[..name_len].copy_from_slice(&e.name[..name_len]);
+                let mut i = (e.hash as usize) & self.mask;
                 loop {
-                    let slot = &mut self.slots[i];
-                    match slot {
-                        Some(x) if x.matches(&name, hash) => {
-                            if min < x.min {
-                                x.min = min;
+                    match &mut self.slots[i] {
+                        None => {
+                            self.slots[i] = Some(Entry {
+                                len: name_len as u32,
+                                hash: e.hash,
+                                min: e.min,
+                                max: e.max,
+                                sum: e.sum,
+                                count: e.count,
+                                name: nm,
+                                used: true,
+                            });
+                            break;
+                        }
+                        Some(x) if x.matches(&e.name[..name_len], e.hash) => {
+                            if e.min < x.min {
+                                x.min = e.min;
                             }
-                            if max > x.max {
-                                x.max = max;
+                            if e.max > x.max {
+                                x.max = e.max;
                             }
-                            x.sum += sum;
-                            x.count += count;
-                            return;
+                            x.sum += e.sum;
+                            x.count += e.count;
+                            break;
                         }
                         _ => i = (i + 1) & self.mask,
                     }
@@ -225,6 +228,16 @@ fn main() {
         for (i, t) in tables.iter().enumerate() {
             let cnt = t.slots.iter().filter(|s| s.is_some()).count();
             eprintln!("DBG table {i}: {cnt} entries");
+            for s in t.slots.iter().filter_map(|s| s.as_ref()) {
+                eprintln!(
+                    "  DBG {} min={} max={} sum={} count={}",
+                    String::from_utf8_lossy(&s.name[..s.len as usize]),
+                    s.min,
+                    s.max,
+                    s.sum,
+                    s.count
+                );
+            }
         }
     }
     for t in tables {
@@ -271,6 +284,6 @@ fn main() {
         .unwrap();
         sep = ", ";
     }
-    write!(out, "}}").unwrap();
+    writeln!(out, "}}").unwrap();
     out.flush().unwrap();
 }
